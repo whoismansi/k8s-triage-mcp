@@ -1,0 +1,70 @@
+# Least-privilege RBAC for k8s-triage-mcp.
+#
+# This server issues no mutating API calls. That is enforced twice: once by the
+# code (no create/update/patch/delete calls exist anywhere in the codebase), and
+# once here, by binding it to a role that only grants reads. The second layer is
+# the one that matters, because it holds even if the first is wrong.
+#
+# Apply with:
+#   kubectl apply -f deploy/rbac.yaml
+#
+# Then point the server at a kubeconfig using this service account.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8s-triage-mcp
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8s-triage-mcp
+rules:
+  # workloads: needed to report desired vs ready replicas and rollout state.
+  # replicasets specifically are how deployment revision history is reconstructed.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+
+  # pods and their events: the primary evidence for crashloops and scheduling
+  # failures. pods/log is required to read the previous container's output,
+  # which is where the actual cause of a CrashLoopBackOff usually appears.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events"]
+    verbs: ["get", "list", "watch"]
+
+  # events moved to events.k8s.io; both groups are read so the server works
+  # across cluster versions.
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+
+  # nodes: needed to explain why a Pending pod cannot be scheduled
+  # (insufficient allocatable resources, taints).
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list"]
+
+  # persistentvolumeclaims: needed to explain a pod stuck on an unbound volume.
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list"]
+
+  # NOTE: configmaps and secrets are deliberately NOT granted. Diffing env vars
+  # reports that a valueFrom reference changed, and names the key, but never
+  # reads the value. An agent does not need secret material to diagnose a
+  # regression, so it is not given access to any.
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8s-triage-mcp
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8s-triage-mcp
+subjects:
+  - kind: ServiceAccount
+    name: k8s-triage-mcp
+    namespace: kube-system
