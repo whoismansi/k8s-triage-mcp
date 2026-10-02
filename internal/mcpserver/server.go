@@ -8,6 +8,7 @@ import (
 	"fmt"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/whoismansi/k8s-triage-mcp/internal/triage"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -31,8 +32,30 @@ func New(clientset kubernetes.Interface) *mcp.Server {
 	})
 
 	registerHealthCheck(server, clientset)
+	registerWorkloadStatus(server, clientset)
 
 	return server
+}
+
+// registerWorkloadStatus exposes triage.GetWorkloadStatus.
+//
+// the handler calls into triage and returns the
+// result. All diagnostic logic lives in the triage package, which keeps it
+// testable without a protocol in the way.
+func registerWorkloadStatus(server *mcp.Server, clientset kubernetes.Interface) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_workload_status",
+		Description: "Report replica health and rollout state for a Deployment, StatefulSet or DaemonSet. " +
+			"Use this first when asked why a workload is unhealthy: it says whether replicas are missing " +
+			"and whether the rollout stalled, but not why. Follow up with get_pod_events or " +
+			"explain_crashloop for the cause.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in triage.WorkloadStatusInput) (*mcp.CallToolResult, triage.WorkloadStatusOutput, error) {
+		out, err := triage.GetWorkloadStatus(ctx, clientset, in)
+		if err != nil {
+			return nil, triage.WorkloadStatusOutput{}, err
+		}
+		return nil, out, nil
+	})
 }
 
 // HealthCheckInput is the argument struct for the health_check tool.
