@@ -1,6 +1,5 @@
 // Command k8s-triage-mcp serves read-only Kubernetes workload diagnostics over
 // the Model Context Protocol on stdio.
-
 package main
 
 import (

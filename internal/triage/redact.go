@@ -4,12 +4,12 @@ import "regexp"
 
 // redaction hides credentials that applications commonly print to their logs.
 //
-// rbac.yaml denies access to Secrets, but logs are a side channel: apps print
-// connection strings, bearer tokens and keys during startup, and returning
-// them verbatim would ship that material to the model provider. This is a
-// best-effort filter over well-known shapes, not a guarantee, which is why the
-// output says how many values were redacted rather than claiming the log is
-// clean.
+// the server's RBAC denies access to Secrets, but logs are a side channel:
+// apps print connection strings, bearer tokens and keys during startup, and
+// returning them verbatim would ship that material to the model provider. this
+// is a best-effort filter over well-known shapes, not a guarantee, which is why
+// the output says how many values were redacted rather than claiming the log
+// is clean.
 
 // RedactedPlaceholder replaces each redacted value.
 const RedactedPlaceholder = "[REDACTED]"
@@ -26,9 +26,9 @@ var redactionRules = []redactionRule{
 	{regexp.MustCompile(`([a-zA-Z][a-zA-Z0-9+.-]*://[^\s:/@]+:)[^\s@/]+@`), "${1}" + RedactedPlaceholder + "@"},
 	// authorization headers and bearer/basic tokens
 	{regexp.MustCompile(`(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}`), "${1} " + RedactedPlaceholder},
-	// JSON web tokens
+	// json web tokens
 	{regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\b`), RedactedPlaceholder},
-	// PEM private key bodies
+	// pem private key headers
 	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`), RedactedPlaceholder},
 	// well-known provider token shapes
 	{regexp.MustCompile(`\b(AKIA|ASIA)[0-9A-Z]{16}\b`), RedactedPlaceholder},
@@ -55,6 +55,22 @@ func redactLine(line string) (string, int) {
 		line = rule.pattern.ReplaceAllString(line, rule.replacement)
 	}
 	return line, count
+}
+
+// secretNamePattern matches variable names that conventionally hold secrets.
+var secretNamePattern = regexp.MustCompile(`(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key|credential)`)
+
+// redactValue hides a value entirely when its name says it is secret, and
+// otherwise applies the line rules (which catch tokens embedded in URLs).
+func redactValue(name, value string) string {
+	if value == "" {
+		return value
+	}
+	if secretNamePattern.MatchString(name) {
+		return RedactedPlaceholder
+	}
+	redacted, _ := redactLine(value)
+	return redacted
 }
 
 // redactLines redacts a slice in place and returns the total replacements.

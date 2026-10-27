@@ -37,8 +37,9 @@ type Client struct {
 // cluster with no kubeconfig present, clientcmd falls back to the service
 // account token automatically.
 //
-// This client is only ever used for read calls. See deploy/rbac.yaml for the
-// least-privilege ClusterRole this server is intended to run under.
+// This client is only ever used for read calls, and is intended to run under
+// a ClusterRole that grants only get, list and watch, with no access to
+// Secrets or ConfigMaps.
 func New(opts Options) (*Client, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()
 	if opts.KubeconfigPath != "" {

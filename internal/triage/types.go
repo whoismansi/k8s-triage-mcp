@@ -48,6 +48,11 @@ const (
 	CodeContainerStartFailed = "container_start_failed"
 	CodeContainerConfigError = "container_config_error"
 	CodePodNotStarted        = "pod_not_started"
+
+	// added in phase 2 with get_pod_events.
+	CodeVolumeMountFailed = "volume_mount_failed"
+	CodeEvicted           = "evicted"
+	CodePodCreateFailed   = "pod_create_failed"
 )
 
 // Finding is a single structured diagnostic observation.

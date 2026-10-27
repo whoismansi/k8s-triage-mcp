@@ -6,7 +6,8 @@ diagnose why a Kubernetes workload is unhealthy.
 Instead of running six `kubectl` commands and squinting at YAML, you ask *"why
 is this deployment unhealthy?"* and the agent gathers the evidence itself.
 
-> **Status: in development.** Phase 1 (foundations) complete. Tools land next.
+> **Status: in development.** All four tools are implemented and unit tested. Next: fixtures
+> on a local kind cluster and a live demo.
 
 ## Design
 
@@ -37,10 +38,10 @@ value.
 
 | Tool | Input | Returns |
 |------|-------|---------|
-| `get_workload_status` | namespace, name | desired vs ready replicas, rollout state, conditions, age |
-| `get_pod_events` | namespace, selector | recent events, normalised, time-sorted, noise filtered |
-| `explain_crashloop` | namespace, pod | restart count, last exit code + reason, last N lines of previous container log |
-| `diff_deployment_revisions` | namespace, name, revA, revB | what changed: image, env, resources, probes |
+| `get_workload_status` | namespace, name, optional kind | desired vs ready replicas, rollout state, conditions, age |
+| `get_pod_events` | namespace, pod or labelSelector, optional window and limit | recent events, merged, newest first, noise filtered |
+| `explain_crashloop` | namespace, pod, optional container and tailLines | per container: restarts, last exit code, reason and signal, previous log tail (redacted) |
+| `diff_deployment_revisions` | namespace, name, optional fromRevision and toRevision | what changed: image, env, resources, probes, command, volumes |
 
 ## Development
 

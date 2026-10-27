@@ -34,8 +34,46 @@ func New(clientset kubernetes.Interface) *mcp.Server {
 	registerHealthCheck(server, clientset)
 	registerWorkloadStatus(server, clientset)
 	registerExplainCrashloop(server, clientset)
+	registerPodEvents(server, clientset)
+	registerRevisionDiff(server, clientset)
 
 	return server
+}
+
+// registerRevisionDiff exposes triage.DiffDeploymentRevisions.
+func registerRevisionDiff(server *mcp.Server, clientset kubernetes.Interface) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "diff_deployment_revisions",
+		Description: "Show what changed between two revisions of a Deployment's pod template: image, env vars, " +
+			"resources, probes, command and args, and volumes, with other changed fields named. Defaults to the " +
+			"latest revision versus the one before it, which answers \"it worked before the last deploy\". Env " +
+			"values from Secrets and ConfigMaps are shown as references only, and literal values with secret " +
+			"names are redacted. Lists the retained revisions so another pair can be requested.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in triage.RevisionDiffInput) (*mcp.CallToolResult, triage.RevisionDiffOutput, error) {
+		out, err := triage.DiffDeploymentRevisions(ctx, clientset, in)
+		if err != nil {
+			return nil, triage.RevisionDiffOutput{}, err
+		}
+		return nil, out, nil
+	})
+}
+
+// registerPodEvents exposes triage.GetPodEvents.
+func registerPodEvents(server *mcp.Server, clientset kubernetes.Interface) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "get_pod_events",
+		Description: "Return recent Kubernetes events for one pod or every pod matching a label selector, newest " +
+			"first, with repeats merged. Routine lifecycle events (Scheduled, Pulling, Pulled, Created, Started) " +
+			"are hidden by default; the filtered count is reported so an empty result is never ambiguous. " +
+			"Use this to find why a pod is failing to schedule, pull, mount or pass probes. Works for pods that " +
+			"no longer exist, since events outlive them.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in triage.PodEventsInput) (*mcp.CallToolResult, triage.PodEventsOutput, error) {
+		out, err := triage.GetPodEvents(ctx, clientset, in)
+		if err != nil {
+			return nil, triage.PodEventsOutput{}, err
+		}
+		return nil, out, nil
+	})
 }
 
 // registerExplainCrashloop exposes triage.ExplainCrashloop.

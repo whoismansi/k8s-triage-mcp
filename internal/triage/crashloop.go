@@ -281,13 +281,20 @@ func readLogs(ctx context.Context, clientset kubernetes.Interface, pod *corev1.P
 		return tail
 	}
 
+	fillLogTail(tail, raw, effective)
+	return tail
+}
+
+// fillLogTail splits raw log output into lines, records truncation, and
+// redacts credentials. it is separate from the fetch so it can be tested with
+// real log content, which the fake clientset cannot return.
+func fillLogTail(tail *LogTail, raw []byte, effective int) {
 	text := strings.TrimRight(string(raw), "\n")
 	if text != "" {
 		tail.Lines = strings.Split(text, "\n")
 	}
 	tail.MayBeTruncated = len(tail.Lines) >= effective || len(raw) >= MaxLogBytes
 	tail.Redactions = redactLines(tail.Lines)
-	return tail
 }
 
 // analyseContainer turns one container's state into findings. It reports

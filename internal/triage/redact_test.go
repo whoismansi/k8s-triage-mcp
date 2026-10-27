@@ -11,6 +11,7 @@ import (
 var (
 	fakeAWSKey      = "AKIA" + strings.Repeat("X", 16)
 	fakeGitHubToken = "ghp" + "_" + strings.Repeat("a", 36)
+	fakeJWT         = "eyJ" + strings.Repeat("h", 12) + "." + strings.Repeat("p", 12) + "." + strings.Repeat("s", 12)
 )
 
 func TestRedactLine(t *testing.T) {
@@ -36,8 +37,8 @@ func TestRedactLine(t *testing.T) {
 		},
 		{
 			name:     "jwt",
-			in:       "token=eyJ-example-header.eyJ-example-payload.example-signature",
-			mustHide: []string{"eyJhbGciOiJIUzI1NiJ9"},
+			in:       "token=" + fakeJWT,
+			mustHide: []string{fakeJWT},
 		},
 		{
 			name:     "env style secret keeps the key name",

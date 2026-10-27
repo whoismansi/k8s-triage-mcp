@@ -376,3 +376,35 @@ func TestMissingPodIsAnError(t *testing.T) {
 		t.Fatal("error = nil, want an error for a pod that does not exist")
 	}
 }
+
+// TestLogTailIsRedacted pins that log lines pass through redaction before
+// they are returned. it calls fillLogTail directly because the fake clientset
+// always returns "fake logs" and cannot carry a credential.
+func TestLogTailIsRedacted(t *testing.T) {
+	raw := []byte("starting\nconnecting to postgres://app:" + "hunter2" + "@db:5432/orders\nDB_PASSWORD=" + "hunter2" + "\n")
+	tail := &LogTail{Lines: []string{}}
+	fillLogTail(tail, raw, DefaultTailLines)
+
+	if len(tail.Lines) != 3 {
+		t.Fatalf("len(Lines) = %d, want 3", len(tail.Lines))
+	}
+	for _, line := range tail.Lines {
+		if strings.Contains(line, "hunter2") {
+			t.Errorf("credential survived in log line %q", line)
+		}
+	}
+	if tail.Redactions != 2 {
+		t.Errorf("Redactions = %d, want 2", tail.Redactions)
+	}
+	if tail.MayBeTruncated {
+		t.Error("MayBeTruncated = true for 3 lines under a 50 line limit")
+	}
+}
+
+func TestLogTailTruncationFlag(t *testing.T) {
+	tail := &LogTail{Lines: []string{}}
+	fillLogTail(tail, []byte("a\nb\nc\n"), 3)
+	if !tail.MayBeTruncated {
+		t.Error("MayBeTruncated = false when the line limit was reached")
+	}
+}

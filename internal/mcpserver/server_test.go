@@ -7,6 +7,9 @@ import (
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
@@ -132,5 +135,134 @@ func TestHealthCheckReturnsStructuredContent(t *testing.T) {
 	}
 	if !output.ReadOnly {
 		t.Error("ReadOnly = false; this server must always report read-only")
+	}
+}
+
+// TestEveryToolIsRegistered pins the public tool surface. renaming a tool
+// breaks every client config and prompt that refers to it, so a change here
+// should be deliberate.
+func TestEveryToolIsRegistered(t *testing.T) {
+	session := connect(t, New(fake.NewClientset()))
+	result, err := session.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("listing tools: %v", err)
+	}
+	registered := map[string]bool{}
+	for _, tool := range result.Tools {
+		registered[tool.Name] = true
+	}
+	for _, name := range []string{
+		"health_check", "get_workload_status", "explain_crashloop",
+		"get_pod_events", "diff_deployment_revisions",
+	} {
+		if !registered[name] {
+			t.Errorf("tool %q is not registered", name)
+		}
+	}
+}
+
+// TestToolsEndToEnd calls each tool through the protocol against one seeded
+// cluster, proving arguments decode, handlers run and structured output comes
+// back. tool logic is covered in the triage package; this checks the wiring.
+func TestToolsEndToEnd(t *testing.T) {
+	labels := map[string]string{"app": "api"}
+	replicas := int32(1)
+	clientset := fake.NewClientset(
+		&appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "default", Generation: 1},
+			Spec:       appsv1.DeploymentSpec{Replicas: &replicas, Selector: &metav1.LabelSelector{MatchLabels: labels}},
+			Status:     appsv1.DeploymentStatus{ObservedGeneration: 1},
+		},
+		replicaSet("api-1", "1", "api:1"),
+		replicaSet("api-2", "2", "api:2"),
+		&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: "api-pod", Namespace: "default", Labels: labels},
+			Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "api", Image: "api:2"}}},
+			Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+				Name:         "api",
+				RestartCount: 3,
+				State:        corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "CrashLoopBackOff"}},
+				LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					ExitCode: 127, Reason: "Error",
+				}},
+			}}},
+		},
+	)
+	session := connect(t, New(clientset))
+
+	tests := []struct {
+		tool      string
+		arguments map[string]any
+		wantCode  string
+	}{
+		{"get_workload_status", map[string]any{"namespace": "default", "name": "api"}, "replicas_unavailable"},
+		{"explain_crashloop", map[string]any{"namespace": "default", "pod": "api-pod"}, "command_not_found"},
+		{"get_pod_events", map[string]any{"namespace": "default", "pod": "api-pod"}, ""},
+		{"diff_deployment_revisions", map[string]any{"namespace": "default", "name": "api"}, "image_changed"},
+	}
+	for _, test := range tests {
+		t.Run(test.tool, func(t *testing.T) {
+			result, err := session.CallTool(context.Background(), &mcp.CallToolParams{Name: test.tool, Arguments: test.arguments})
+			if err != nil {
+				t.Fatalf("protocol error: %v", err)
+			}
+			if result.IsError {
+				t.Fatalf("tool error: %+v", result.Content)
+			}
+			encoded, err := json.Marshal(result.StructuredContent)
+			if err != nil {
+				t.Fatalf("marshalling structured content: %v", err)
+			}
+			var output struct {
+				Findings []struct {
+					Code string `json:"code"`
+				} `json:"findings"`
+			}
+			if err := json.Unmarshal(encoded, &output); err != nil {
+				t.Fatalf("decoding structured content: %v", err)
+			}
+			if output.Findings == nil {
+				t.Error("findings is null; it must always be an array")
+			}
+			if test.wantCode == "" {
+				return
+			}
+			for _, finding := range output.Findings {
+				if finding.Code == test.wantCode {
+					return
+				}
+			}
+			t.Errorf("no %q finding in %s", test.wantCode, encoded)
+		})
+	}
+}
+
+// TestToolErrorsAreToolResults checks a bad request comes back as a tool error
+// the agent can read and correct, not a protocol failure that ends the session.
+func TestToolErrorsAreToolResults(t *testing.T) {
+	session := connect(t, New(fake.NewClientset()))
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "get_workload_status",
+		Arguments: map[string]any{"namespace": "default", "name": "missing"},
+	})
+	if err != nil {
+		t.Fatalf("protocol error = %v, want a tool error result instead", err)
+	}
+	if !result.IsError {
+		t.Error("IsError = false for a workload that does not exist")
+	}
+}
+
+func replicaSet(name, revision, image string) *appsv1.ReplicaSet {
+	return &appsv1.ReplicaSet{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: name, Namespace: "default",
+			Labels:          map[string]string{"app": "api"},
+			Annotations:     map[string]string{"deployment.kubernetes.io/revision": revision},
+			OwnerReferences: []metav1.OwnerReference{{Kind: "Deployment", Name: "api"}},
+		},
+		Spec: appsv1.ReplicaSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
+			Containers: []corev1.Container{{Name: "api", Image: image}},
+		}}},
 	}
 }
