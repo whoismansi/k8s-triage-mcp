@@ -41,6 +41,13 @@ const (
 	CodeProbeChanged         = "probe_changed"
 	CodeCommandChanged       = "command_changed"
 	CodeOtherSpecChanged     = "other_spec_changed"
+
+	// added in phase 2 with explain_crashloop.
+	CodeKilledBySignal       = "killed_by_signal"
+	CodeExitedCleanly        = "exited_cleanly"
+	CodeContainerStartFailed = "container_start_failed"
+	CodeContainerConfigError = "container_config_error"
+	CodePodNotStarted        = "pod_not_started"
 )
 
 // Finding is a single structured diagnostic observation.

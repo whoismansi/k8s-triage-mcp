@@ -33,8 +33,26 @@ func New(clientset kubernetes.Interface) *mcp.Server {
 
 	registerHealthCheck(server, clientset)
 	registerWorkloadStatus(server, clientset)
+	registerExplainCrashloop(server, clientset)
 
 	return server
+}
+
+// registerExplainCrashloop exposes triage.ExplainCrashloop.
+func registerExplainCrashloop(server *mcp.Server, clientset kubernetes.Interface) {
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "explain_crashloop",
+		Description: "Explain why a pod's containers are failing: per-container restart count, last exit code, " +
+			"reason and signal, and the tail of the previous (crashed) container's log. Reports every container " +
+			"including init containers unless one is named. Exit code 137 is reported as oom_killed only when " +
+			"the kubelet says OOMKilled; otherwise it is killed_by_signal with hasLivenessProbe as evidence.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in triage.CrashloopInput) (*mcp.CallToolResult, triage.CrashloopOutput, error) {
+		out, err := triage.ExplainCrashloop(ctx, clientset, in)
+		if err != nil {
+			return nil, triage.CrashloopOutput{}, err
+		}
+		return nil, out, nil
+	})
 }
 
 // registerWorkloadStatus exposes triage.GetWorkloadStatus.
