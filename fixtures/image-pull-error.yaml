@@ -1,0 +1,21 @@
+# Scenario 4: image pull failure and progress deadline.
+# The image tag does not exist, and the 30 second progress deadline makes the
+# rollout fail quickly instead of after the 10 minute default.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-image
+  namespace: triage-demo
+  labels: {fixture: bad-image}
+spec:
+  replicas: 2
+  progressDeadlineSeconds: 30
+  selector:
+    matchLabels: {app: bad-image}
+  template:
+    metadata:
+      labels: {app: bad-image}
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27-doesnotexist

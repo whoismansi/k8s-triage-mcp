@@ -1,0 +1,21 @@
+# Scenario 1: command not found.
+# The container runs a binary that does not exist in the image, so the shell
+# exits 127 on every start and the pod enters CrashLoopBackOff.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bad-command
+  namespace: triage-demo
+  labels: {fixture: bad-command}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: bad-command}
+  template:
+    metadata:
+      labels: {app: bad-command}
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c", "echo starting worker; run-worker --port 8080"]

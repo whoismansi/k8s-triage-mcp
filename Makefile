@@ -1,7 +1,7 @@
 BINARY := k8s-triage-mcp
 PKG := ./...
 
-.PHONY: build test lint vet fmt clean run help
+.PHONY: build test test-verbose cover vet fmt lint check run clean kind-up kind-wait demo kind-down help
 
 help: ## show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -34,3 +34,15 @@ run: build ## run the server against the current kubeconfig context
 
 clean: ## remove build artifacts
 	rm -rf bin coverage.out
+
+kind-up: build ## create the kind demo cluster and apply every fixture
+	scripts/demo.sh up
+
+kind-wait: ## wait until every demo scenario is in its failure state
+	scripts/demo.sh wait
+
+demo: build ## show tool output for one scenario: make demo SCENARIO=orders
+	scripts/demo.sh show $(SCENARIO)
+
+kind-down: ## delete the kind demo cluster
+	scripts/demo.sh down

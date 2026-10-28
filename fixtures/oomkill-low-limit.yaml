@@ -1,0 +1,23 @@
+# Scenario 2: OOMKilled.
+# The container reads /dev/zero into memory until it passes its 32Mi limit
+# and the kernel kills it.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: memory-hog
+  namespace: triage-demo
+  labels: {fixture: memory-hog}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: memory-hog}
+  template:
+    metadata:
+      labels: {app: memory-hog}
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command: ["sh", "-c", "echo loading cache; tail /dev/zero"]
+          resources:
+            limits: {memory: 32Mi}

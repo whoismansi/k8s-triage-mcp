@@ -408,3 +408,58 @@ func TestLogTailTruncationFlag(t *testing.T) {
 		t.Error("MayBeTruncated = false when the line limit was reached")
 	}
 }
+
+// TestCurrentlyTerminatedUsesCurrentExitAndLog reproduces what a real kubelet
+// reports between restarts: the container is terminated right now and also has
+// an older termination. The exit that matters is the current one, and its log
+// is the current log, not the previous one. Found against a kind cluster; the
+// fake clientset had never produced this state.
+func TestCurrentlyTerminatedUsesCurrentExitAndLog(t *testing.T) {
+	now := time.Now()
+	status := corev1.ContainerStatus{
+		Name:         "app",
+		RestartCount: 5,
+		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+			ExitCode: 127, Reason: "Error",
+			StartedAt: metav1.NewTime(now.Add(-time.Second)), FinishedAt: metav1.NewTime(now),
+		}},
+		LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+			ExitCode: 1, Reason: "Error",
+			StartedAt: metav1.NewTime(now.Add(-time.Minute)), FinishedAt: metav1.NewTime(now.Add(-time.Minute)),
+		}},
+	}
+	out := explain(t, []*corev1.Pod{pod("p", corev1.Container{Name: "app"}, status)},
+		CrashloopInput{Namespace: "default", Pod: "p"})
+
+	if !hasFinding(out.Findings, CodeCommandNotFound) {
+		t.Errorf("findings = %+v, want command_not_found from the current exit 127", out.Findings)
+	}
+	if hasFinding(out.Findings, CodeNonZeroExit) {
+		t.Errorf("findings = %+v, reported the older exit 1 instead of the current one", out.Findings)
+	}
+	if out.Containers[0].Logs.Previous {
+		t.Error("Logs.Previous = true; a currently terminated container's evidence is its current log")
+	}
+}
+
+// TestKubeletLogErrorIsNotTreatedAsOutput: the kubelet can return an error
+// message as a successful log response. It must be reported as an error, not
+// shown to the agent as application output.
+func TestKubeletLogErrorIsNotTreatedAsOutput(t *testing.T) {
+	tests := []struct {
+		body       string
+		wantFailed bool
+	}{
+		{"unable to retrieve container logs for containerd://4acd8a15a7ca", true},
+		{"unable to retrieve container logs for containerd://4acd8a15a7ca\n", true},
+		{"starting worker\nsh: run-worker: not found", false},
+		{"unable to retrieve container logs for x\nbut this is real output", false},
+		{"panic: unable to retrieve config", false},
+	}
+	for _, test := range tests {
+		_, failed := kubeletLogError([]byte(test.body))
+		if failed != test.wantFailed {
+			t.Errorf("kubeletLogError(%q) = %v, want %v", test.body, failed, test.wantFailed)
+		}
+	}
+}

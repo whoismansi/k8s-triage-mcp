@@ -249,6 +249,20 @@ func analyseWorkload(out WorkloadStatusOutput, conditions []WorkloadCondition) [
 			WithEvidence("missing", out.Replicas.Desired-out.Replicas.Ready))
 	}
 
+	// ready replicas can all belong to the previous revision while the new one
+	// fails to start: a rolling update keeps old pods serving. without this,
+	// a stuck rollout looks healthy until the progress deadline, which
+	// defaults to ten minutes. only meaningful once the controller has seen
+	// the current spec.
+	if out.Generation.UpToDate && out.Replicas.Updated < out.Replicas.Desired {
+		findings = append(findings, NewFinding(
+			CodeRolloutIncomplete, SeverityWarning,
+			"not every replica is running the current spec; ready replicas may be from the previous revision").
+			WithEvidence("desired", out.Replicas.Desired).
+			WithEvidence("updated", out.Replicas.Updated).
+			WithEvidence("ready", out.Replicas.Ready))
+	}
+
 	for _, condition := range conditions {
 		// ProgressDeadlineExceeded surfaces as Progressing=False with this
 		// reason. It is the controller giving up on the rollout, which is

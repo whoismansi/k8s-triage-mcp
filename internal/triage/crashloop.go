@@ -152,7 +152,12 @@ func ExplainCrashloop(ctx context.Context, clientset kubernetes.Interface, in Cr
 	for _, t := range targets {
 		report := buildReport(t.spec, t.status, t.init)
 		if report.LastTermination != nil || report.CurrentTermination != nil {
-			report.Logs = readLogs(ctx, clientset, pod, t.spec.Name, report.LastTermination != nil, in.TailLines, effectiveTail)
+			// when the container is terminated right now, the instance that
+			// just died is the current one, so its own log holds the evidence.
+			// only while it is waiting or running again does that evidence move
+			// to the previous instance.
+			previous := report.CurrentTermination == nil
+			report.Logs = readLogs(ctx, clientset, pod, t.spec.Name, previous, in.TailLines, effectiveTail)
 		}
 		out.Containers = append(out.Containers, report)
 		out.Findings = append(out.Findings, analyseContainer(report)...)
@@ -281,8 +286,31 @@ func readLogs(ctx context.Context, clientset kubernetes.Interface, pod *corev1.P
 		return tail
 	}
 
+	// the kubelet reports some failures, such as logs that the container
+	// runtime has already removed, as a successful response whose body is an
+	// error message. passing that through would present it to the agent as
+	// output from the application.
+	if message, failed := kubeletLogError(raw); failed {
+		tail.Error = message
+		return tail
+	}
+
 	fillLogTail(tail, raw, effective)
 	return tail
+}
+
+// kubeletLogError reports whether a log response body is a kubelet error
+// message rather than container output.
+func kubeletLogError(raw []byte) (string, bool) {
+	text := strings.TrimSpace(string(raw))
+	if strings.Contains(text, "\n") {
+		return "", false
+	}
+	if strings.HasPrefix(text, "unable to retrieve container logs for ") ||
+		strings.HasPrefix(text, "failed to try resolving symlinks in path") {
+		return text, true
+	}
+	return "", false
 }
 
 // fillLogTail splits raw log output into lines, records truncation, and
@@ -329,11 +357,12 @@ func analyseContainer(report ContainerReport) []Finding {
 			WithEvidence("message", report.WaitingMsg)))
 	}
 
-	// the most recent exit is the evidence. prefer the previous instance,
-	// because during CrashLoopBackOff the current state is just "waiting".
-	exit := report.LastTermination
+	// the most recent exit is the evidence. when the container is terminated
+	// right now, that is the current instance; otherwise, during
+	// CrashLoopBackOff or after a restart, it is the previous instance.
+	exit := report.CurrentTermination
 	if exit == nil {
-		exit = report.CurrentTermination
+		exit = report.LastTermination
 	}
 	if exit == nil {
 		return findings

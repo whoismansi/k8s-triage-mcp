@@ -173,6 +173,38 @@ func TestGetWorkloadStatusDeployment(t *testing.T) {
 	}
 }
 
+// TestRollingUpdateStuckBehindOldReplicas reproduces the regression scenario
+// on a real cluster: the old revision still has every replica ready, while
+// the new revision's pod cannot start. Ready equals desired, so without a
+// check on updated replicas the deployment would look healthy.
+func TestRollingUpdateStuckBehindOldReplicas(t *testing.T) {
+	clientset := fake.NewClientset(deployment("orders", func(d *appsv1.Deployment) {
+		d.Generation = 2
+		d.Status.ObservedGeneration = 2
+		d.Status.ReadyReplicas = 2
+		d.Status.AvailableReplicas = 2
+		d.Status.UpdatedReplicas = 1
+		d.Spec.Replicas = ptr(2)
+	}))
+
+	got, err := GetWorkloadStatus(context.Background(), clientset, WorkloadStatusInput{
+		Namespace: "default", Name: "orders",
+	})
+	if err != nil {
+		t.Fatalf("GetWorkloadStatus() error = %v", err)
+	}
+	if got.Healthy {
+		t.Error("Healthy = true while a replica is still on the previous revision")
+	}
+	finding := findingByCode(t, got.Findings, CodeRolloutIncomplete)
+	if finding.Evidence["updated"] != int32(1) {
+		t.Errorf("Evidence[updated] = %v, want 1", finding.Evidence["updated"])
+	}
+	if hasFinding(got.Findings, CodeReplicasUnavailable) {
+		t.Error("replicas_unavailable raised although every desired replica is ready")
+	}
+}
+
 // TestFindingsIsNeverNil matters for JSON shape: a nil slice marshals to null,
 // which is a different thing for a consumer to handle than an empty array.
 func TestFindingsIsNeverNil(t *testing.T) {

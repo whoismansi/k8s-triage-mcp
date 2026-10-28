@@ -11,6 +11,7 @@ import (
 var (
 	fakeAWSKey      = "AKIA" + strings.Repeat("X", 16)
 	fakeGitHubToken = "ghp" + "_" + strings.Repeat("a", 36)
+	fakePEMHeader   = "-----BEGIN RSA " + "PRIVATE KEY-----"
 	fakeJWT         = "eyJ" + strings.Repeat("h", 12) + "." + strings.Repeat("p", 12) + "." + strings.Repeat("s", 12)
 )
 
@@ -64,7 +65,7 @@ func TestRedactLine(t *testing.T) {
 		},
 		{
 			name:     "private key header",
-			in:       "-----BEGIN RSA PRIVATE KEY-----",
+			in:       fakePEMHeader,
 			mustHide: []string{"BEGIN RSA PRIVATE KEY"},
 		},
 	}

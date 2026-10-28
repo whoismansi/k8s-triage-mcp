@@ -1,0 +1,21 @@
+# Scenario 5: unschedulable pod.
+# No node has 999 CPUs, so the pod stays Pending and never starts.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: too-big
+  namespace: triage-demo
+  labels: {fixture: too-big}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: too-big}
+  template:
+    metadata:
+      labels: {app: too-big}
+    spec:
+      containers:
+        - name: app
+          image: nginx:1.27
+          resources:
+            requests: {cpu: "999"}

@@ -1,0 +1,29 @@
+# Scenario 7: credentials printed to logs.
+# The container prints a database URL with a password and a DB_PASSWORD line,
+# then exits so its previous log can be read.
+# Expect: both values replaced with [REDACTED]; redactions 2; the literal
+# password never appears in tool output.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: leaky
+  namespace: triage-demo
+  labels: {fixture: leaky}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app: leaky}
+  template:
+    metadata:
+      labels: {app: leaky}
+    spec:
+      containers:
+        - name: app
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - |
+              echo connecting to postgres://app:Sup3rS3cret@db:5432/orders
+              echo DB_PASSWORD=Sup3rS3cret
+              exit 1
