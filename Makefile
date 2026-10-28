@@ -1,7 +1,7 @@
 BINARY := k8s-triage-mcp
 PKG := ./...
 
-.PHONY: build test test-verbose cover vet fmt lint check run clean kind-up kind-wait demo kind-down help
+.PHONY: build test test-verbose cover vet fmt lint tidy-check check run clean kind-up kind-wait demo kind-down help
 
 help: ## show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -25,9 +25,14 @@ vet: ## run go vet
 fmt: ## format all Go source
 	gofmt -s -w .
 
-lint: fmt vet ## format, vet
+lint: ## run golangci-lint (install: brew install golangci-lint)
+	golangci-lint run $(PKG)
 
-check: lint test ## everything CI runs
+tidy-check: ## fail if go.mod or go.sum are not tidy
+	go mod tidy -diff
+
+check: fmt tidy-check vet lint ## the same checks CI runs, plus tests with the race detector
+	go test -race -count=1 $(PKG)
 
 run: build ## run the server against the current kubeconfig context
 	./bin/$(BINARY)

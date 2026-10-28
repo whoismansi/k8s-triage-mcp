@@ -57,14 +57,14 @@ func runCLI(cmd command, args []string, stdout, stderr io.Writer) int {
 
 	client, err := kube.New(kube.Options{KubeconfigPath: *kubeconfigPath, Context: *contextName})
 	if err != nil {
-		fmt.Fprintf(stderr, "cannot connect to cluster: %v\n", err)
+		writeLine(stderr, fmt.Sprintf("cannot connect to cluster: %v", err))
 		return 1
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), cliTimeout)
 	defer cancel()
 	if err := cmd.run(ctx, client.Clientset, rest, stdout); err != nil {
-		fmt.Fprintf(stderr, "%s: %v\n", cmd.name, err)
+		writeLine(stderr, fmt.Sprintf("%s: %v", cmd.name, err))
 		return 1
 	}
 	return 0
@@ -206,15 +206,22 @@ func runDiff(ctx context.Context, clientset kubernetes.Interface, args []string,
 	return writeJSON(out, result)
 }
 
+// writeLine writes a message for a human to stderr or stdout. A failed write
+// to a terminal has no meaningful recovery, so the error is deliberately
+// discarded here, in one place, rather than at every call site.
+func writeLine(out io.Writer, line string) {
+	_, _ = io.WriteString(out, line+"\n")
+}
+
 func printUsage(out io.Writer) {
-	fmt.Fprintln(out, "usage:")
-	fmt.Fprintln(out, "  k8s-triage-mcp [--kubeconfig PATH] [--context NAME]        run the MCP server on stdio")
-	fmt.Fprintln(out, "  k8s-triage-mcp <command> [flags] <name>                    run one tool and print JSON")
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "commands:")
+	var usage strings.Builder
+	usage.WriteString("usage:\n")
+	usage.WriteString("  k8s-triage-mcp [--kubeconfig PATH] [--context NAME]        run the MCP server on stdio\n")
+	usage.WriteString("  k8s-triage-mcp <command> [flags] <name>                    run one tool and print JSON\n")
+	usage.WriteString("\ncommands:\n")
 	for _, cmd := range commands {
-		fmt.Fprintf(out, "  %-10s %s\n", cmd.name, cmd.summary)
+		fmt.Fprintf(&usage, "  %-10s %s\n", cmd.name, cmd.summary)
 	}
-	fmt.Fprintln(out)
-	fmt.Fprintln(out, "every command accepts --kubeconfig, --context and -n NAMESPACE.")
+	usage.WriteString("\nevery command accepts --kubeconfig, --context and -n NAMESPACE.")
+	writeLine(out, usage.String())
 }

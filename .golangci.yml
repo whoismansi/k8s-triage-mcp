@@ -1,0 +1,26 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  # the "standard" set: errcheck, govet, ineffassign, staticcheck, unused.
+  default: standard
+  enable:
+    # flags misspelled words in comments and strings.
+    - misspell
+    # flags error wrapping that drops the original error.
+    - errorlint
+    # flags unchecked type assertions and other common bug patterns.
+    - gocritic
+    # flags http and io resources that are not closed.
+    - bodyclose
+  settings:
+    misspell:
+      # the project uses British spellings in comments (normalise, behaviour).
+      locale: UK
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
