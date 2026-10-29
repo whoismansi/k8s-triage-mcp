@@ -38,7 +38,7 @@ type Client struct {
 // account token automatically.
 //
 // This client is only ever used for read calls, and is intended to run under
-// a ClusterRole that grants only get, list and watch, with no access to
+// a ClusterRole that grants only get and list, with no access to
 // Secrets or ConfigMaps.
 func New(opts Options) (*Client, error) {
 	loadingRules := clientcmd.NewDefaultClientConfigLoadingRules()

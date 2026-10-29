@@ -145,7 +145,9 @@ The server runs with whatever credentials your kubeconfig context has. If that
 context is cluster-admin, the server could in principle do anything an admin
 can. For anything other than a local test cluster, run it with a dedicated
 service account bound to the ClusterRole in [`deploy/rbac.yaml`](deploy/rbac.yaml),
-which grants only `get`, `list` and `watch` on the resources the tools read.
+which grants only `get` and `list` on the resources the tools read. Every tool
+call has a 30 second deadline, and an empty namespace is rejected rather than
+treated as "all namespaces".
 
 That role deliberately excludes Secrets and ConfigMaps. When an env var comes
 from a Secret, the diff tool reports the Secret name and key that changed, never
@@ -153,9 +155,13 @@ the value.
 
 Logs are the gap RBAC can't close: applications print connection strings and
 tokens at startup, and those go wherever the tool output goes, including to the
-model provider. `explain_crashloop` redacts common credential shapes (passwords
-in URLs, bearer tokens, JWTs, cloud and GitHub-style keys, values of variables
-named like `PASSWORD` or `API_KEY`) and reports how many it replaced. This is a
+model provider. The same text also turns up outside logs, because a container's
+termination message, its waiting reason, pod conditions and events can all quote
+what the process printed. Every one of those fields is redacted, not just the
+log lines. The redaction covers common credential shapes (passwords in URLs,
+bearer and basic auth, JWTs, cloud and GitHub-style keys, `--password` style
+flags, values of variables named like `PASSWORD` or `API_KEY`), and
+`explain_crashloop` reports how many it replaced. This is a
 best-effort pattern match. A count of zero means nothing matched a known
 pattern, not that the log is clean.
 

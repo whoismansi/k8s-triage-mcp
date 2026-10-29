@@ -4,13 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // connect wires a client to a server over an in-memory transport and returns
@@ -264,5 +268,43 @@ func replicaSet(name, revision, image string) *appsv1.ReplicaSet {
 		Spec: appsv1.ReplicaSetSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 			Containers: []corev1.Container{{Name: "api", Image: image}},
 		}}},
+	}
+}
+
+// TestToolCallsTimeOut checks a hung API server produces a tool error the agent
+// can read, instead of holding the call open. the reactor blocks until the
+// request context ends, which is what an unresponsive API server looks like
+// to client-go.
+func TestToolCallsTimeOut(t *testing.T) {
+	previous := toolTimeout
+	toolTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { toolTimeout = previous })
+
+	clientset := fake.NewClientset()
+	clientset.PrependReactor("*", "*", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		time.Sleep(2 * time.Second)
+		return true, nil, fmt.Errorf("unreachable")
+	})
+	session := connect(t, New(clientset))
+
+	start := time.Now()
+	result, err := session.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "get_workload_status",
+		Arguments: map[string]any{"namespace": "default", "name": "web"},
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("protocol error = %v, want a tool error result", err)
+	}
+	if !result.IsError {
+		t.Error("IsError = false for a call that should have timed out")
+	}
+	if elapsed > time.Second {
+		t.Errorf("call took %v, want it bounded near the %v timeout", elapsed, toolTimeout)
+	}
+	// the agent reads this text, so it must say what happened.
+	encoded, _ := json.Marshal(result.Content)
+	if !strings.Contains(string(encoded), "did not respond within") {
+		t.Errorf("timeout error does not explain itself: %s", encoded)
 	}
 }

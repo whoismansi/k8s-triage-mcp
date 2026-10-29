@@ -105,6 +105,12 @@ var signalNames = map[int32]string{
 
 // ExplainCrashloop reports container exit state and previous logs for a pod.
 func ExplainCrashloop(ctx context.Context, clientset kubernetes.Interface, in CrashloopInput) (CrashloopOutput, error) {
+	if err := requireName("namespace", in.Namespace); err != nil {
+		return CrashloopOutput{}, err
+	}
+	if err := requireName("pod", in.Pod); err != nil {
+		return CrashloopOutput{}, err
+	}
 	pod, err := clientset.CoreV1().Pods(in.Namespace).Get(ctx, in.Pod, metav1.GetOptions{})
 	if err != nil {
 		return CrashloopOutput{}, fmt.Errorf("getting pod %s/%s: %w", in.Namespace, in.Pod, err)
@@ -173,7 +179,7 @@ func ExplainCrashloop(ctx context.Context, clientset kubernetes.Interface, in Cr
 		for _, condition := range pod.Status.Conditions {
 			if condition.Type == corev1.PodScheduled && condition.Status != corev1.ConditionTrue {
 				finding = finding.WithEvidence("scheduledReason", condition.Reason).
-					WithEvidence("scheduledMessage", condition.Message)
+					WithEvidence("scheduledMessage", redactText(condition.Message))
 			}
 		}
 		out.Findings = append(out.Findings, finding)
@@ -228,7 +234,7 @@ func buildReport(spec corev1.Container, status *corev1.ContainerStatus, init boo
 	case status.State.Waiting != nil:
 		report.State = "waiting"
 		report.WaitingReason = status.State.Waiting.Reason
-		report.WaitingMsg = status.State.Waiting.Message
+		report.WaitingMsg = redactText(status.State.Waiting.Message)
 	case status.State.Terminated != nil:
 		report.State = "terminated"
 		report.CurrentTermination = terminationInfo(status.State.Terminated)
@@ -244,7 +250,7 @@ func terminationInfo(terminated *corev1.ContainerStateTerminated) *TerminationIn
 		ExitCode:   terminated.ExitCode,
 		Signal:     terminated.Signal,
 		Reason:     terminated.Reason,
-		Message:    terminated.Message,
+		Message:    redactText(terminated.Message),
 		StartedAt:  formatTime(terminated.StartedAt),
 		FinishedAt: formatTime(terminated.FinishedAt),
 	}

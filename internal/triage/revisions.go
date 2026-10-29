@@ -69,6 +69,12 @@ type RevisionDiffOutput struct {
 
 // DiffDeploymentRevisions compares the pod templates of two revisions.
 func DiffDeploymentRevisions(ctx context.Context, clientset kubernetes.Interface, in RevisionDiffInput) (RevisionDiffOutput, error) {
+	if err := requireName("namespace", in.Namespace); err != nil {
+		return RevisionDiffOutput{}, err
+	}
+	if err := requireName("name", in.Name); err != nil {
+		return RevisionDiffOutput{}, err
+	}
 	deployment, err := clientset.AppsV1().Deployments(in.Namespace).Get(ctx, in.Name, metav1.GetOptions{})
 	if err != nil {
 		return RevisionDiffOutput{}, fmt.Errorf("getting deployment %s/%s: %w", in.Namespace, in.Name, err)

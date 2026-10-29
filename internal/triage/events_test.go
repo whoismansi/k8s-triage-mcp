@@ -3,6 +3,7 @@ package triage
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 var eventSequence int
@@ -264,5 +266,43 @@ func TestInputValidation(t *testing.T) {
 	if _, err := GetPodEvents(context.Background(), clientset,
 		PodEventsInput{Namespace: "default", LabelSelector: "app=missing"}); err == nil {
 		t.Error("selector matching no pods returned no error")
+	}
+}
+
+// TestEventsV1FailureIsReported: the events.k8s.io read is best effort, but a
+// failure there (RBAC denial, timeout) used to vanish. the agent must be told
+// one source was unavailable, or it will read a partial answer as complete.
+func TestEventsV1FailureIsReported(t *testing.T) {
+	clientset := fake.NewClientset(coreEvent("p", "Warning", "BackOff", "crashing", 3, time.Minute))
+	clientset.PrependReactor("list", "events", func(action k8stesting.Action) (bool, runtime.Object, error) {
+		if action.GetResource().Group == "events.k8s.io" {
+			return true, nil, fmt.Errorf("events.events.k8s.io is forbidden")
+		}
+		return false, nil, nil
+	})
+
+	out, err := GetPodEvents(context.Background(), clientset, PodEventsInput{Namespace: "default", Pod: "p"})
+	if err != nil {
+		t.Fatalf("GetPodEvents() error = %v; a failed secondary source must not fail the call", err)
+	}
+	if len(out.Events) != 1 {
+		t.Errorf("len(Events) = %d, want the core API event still returned", len(out.Events))
+	}
+	if len(out.Warnings) == 0 || !strings.Contains(strings.Join(out.Warnings, " "), "events.k8s.io") {
+		t.Errorf("Warnings = %v, want a note that events.k8s.io could not be read", out.Warnings)
+	}
+}
+
+// TestEventWithoutTimestampIsNotTreatedAsRecent: an event with no usable
+// timestamp used to bypass the window filter and appear as current.
+func TestEventWithoutTimestampIsNotTreatedAsRecent(t *testing.T) {
+	undated := coreEvent("p", "Warning", "BackOff", "undated", 1, time.Minute)
+	undated.FirstTimestamp = metav1.Time{}
+	undated.LastTimestamp = metav1.Time{}
+	undated.EventTime = metav1.MicroTime{}
+
+	out := podEvents(t, []runtime.Object{undated}, PodEventsInput{Namespace: "default", Pod: "p"})
+	if len(out.Events) != 0 {
+		t.Errorf("Events = %+v, want an undated event excluded from a time window", out.Events)
 	}
 }

@@ -6,9 +6,11 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/whoismansi/k8s-triage-mcp/internal/triage"
+	"k8s.io/apimachinery/pkg/version"
 	"k8s.io/client-go/kubernetes"
 )
 
@@ -17,6 +19,42 @@ const Version = "v0.1.0"
 
 // ServerName is the name advertised to clients during initialization.
 const ServerName = "k8s-triage-mcp"
+
+// toolTimeout bounds every tool call. the agent waits on the call, and an
+// unreachable or overloaded API server would otherwise hold it until the
+// client gives up, with no explanation. a timeout comes back as a normal tool
+// error the agent can read and report.
+var toolTimeout = 30 * time.Second
+
+// bounded runs call with the tool timeout and returns as soon as either the
+// call finishes or the timeout fires.
+//
+// client-go cancels an in-flight HTTP request when its context ends, so the
+// context alone usually suffices. the select is the backstop for anything on
+// the call path that does not honour the context: the agent gets an answer at
+// the deadline regardless. the channel is buffered so a call that finishes
+// after the deadline can still send and exit, rather than leaking a goroutine.
+func bounded[T any](ctx context.Context, call func(context.Context) (T, error)) (T, error) {
+	ctx, cancel := context.WithTimeout(ctx, toolTimeout)
+	defer cancel()
+
+	type result struct {
+		value T
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		value, err := call(ctx)
+		done <- result{value, err}
+	}()
+	select {
+	case r := <-done:
+		return r.value, r.err
+	case <-ctx.Done():
+		var zero T
+		return zero, fmt.Errorf("the Kubernetes API did not respond within %s: %w", toolTimeout, ctx.Err())
+	}
+}
 
 // New builds an MCP server with every triage tool registered against the given
 // clientset.
@@ -50,7 +88,9 @@ func registerRevisionDiff(server *mcp.Server, clientset kubernetes.Interface) {
 			"values from Secrets and ConfigMaps are shown as references only, and literal values with secret " +
 			"names are redacted. Lists the retained revisions so another pair can be requested.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in triage.RevisionDiffInput) (*mcp.CallToolResult, triage.RevisionDiffOutput, error) {
-		out, err := triage.DiffDeploymentRevisions(ctx, clientset, in)
+		out, err := bounded(ctx, func(ctx context.Context) (triage.RevisionDiffOutput, error) {
+			return triage.DiffDeploymentRevisions(ctx, clientset, in)
+		})
 		if err != nil {
 			return nil, triage.RevisionDiffOutput{}, err
 		}
@@ -68,7 +108,9 @@ func registerPodEvents(server *mcp.Server, clientset kubernetes.Interface) {
 			"Use this to find why a pod is failing to schedule, pull, mount or pass probes. Works for pods that " +
 			"no longer exist, since events outlive them.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in triage.PodEventsInput) (*mcp.CallToolResult, triage.PodEventsOutput, error) {
-		out, err := triage.GetPodEvents(ctx, clientset, in)
+		out, err := bounded(ctx, func(ctx context.Context) (triage.PodEventsOutput, error) {
+			return triage.GetPodEvents(ctx, clientset, in)
+		})
 		if err != nil {
 			return nil, triage.PodEventsOutput{}, err
 		}
@@ -85,7 +127,9 @@ func registerExplainCrashloop(server *mcp.Server, clientset kubernetes.Interface
 			"including init containers unless one is named. Exit code 137 is reported as oom_killed only when " +
 			"the kubelet says OOMKilled; otherwise it is killed_by_signal with hasLivenessProbe as evidence.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in triage.CrashloopInput) (*mcp.CallToolResult, triage.CrashloopOutput, error) {
-		out, err := triage.ExplainCrashloop(ctx, clientset, in)
+		out, err := bounded(ctx, func(ctx context.Context) (triage.CrashloopOutput, error) {
+			return triage.ExplainCrashloop(ctx, clientset, in)
+		})
 		if err != nil {
 			return nil, triage.CrashloopOutput{}, err
 		}
@@ -106,7 +150,9 @@ func registerWorkloadStatus(server *mcp.Server, clientset kubernetes.Interface) 
 			"and whether the rollout stalled, but not why. Follow up with get_pod_events or " +
 			"explain_crashloop for the cause.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in triage.WorkloadStatusInput) (*mcp.CallToolResult, triage.WorkloadStatusOutput, error) {
-		out, err := triage.GetWorkloadStatus(ctx, clientset, in)
+		out, err := bounded(ctx, func(ctx context.Context) (triage.WorkloadStatusOutput, error) {
+			return triage.GetWorkloadStatus(ctx, clientset, in)
+		})
 		if err != nil {
 			return nil, triage.WorkloadStatusOutput{}, err
 		}
@@ -133,7 +179,10 @@ func registerHealthCheck(server *mcp.Server, clientset kubernetes.Interface) {
 		Name:        "health_check",
 		Description: "Verify the triage server can reach the Kubernetes API server.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ HealthCheckInput) (*mcp.CallToolResult, HealthCheckOutput, error) {
-		versionInfo, err := clientset.Discovery().ServerVersion()
+		versionInfo, err := bounded(ctx, func(context.Context) (*version.Info, error) {
+			// discovery's ServerVersion takes no context; bounded still returns at the deadline.
+			return clientset.Discovery().ServerVersion()
+		})
 		if err != nil {
 			return nil, HealthCheckOutput{}, fmt.Errorf("cannot reach Kubernetes API server: %w", err)
 		}

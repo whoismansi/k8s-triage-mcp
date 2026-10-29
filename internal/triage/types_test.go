@@ -1,6 +1,12 @@
 package triage
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"k8s.io/client-go/kubernetes/fake"
+)
 
 func TestWithEvidenceAccumulates(t *testing.T) {
 	finding := NewFinding(CodeNonZeroExit, SeverityCritical, "container exited non-zero").
@@ -50,5 +56,73 @@ func TestNewFindingHasNoEvidenceMap(t *testing.T) {
 	// rather than emitting a noisy empty object.
 	if finding.Evidence != nil {
 		t.Errorf("Evidence = %v, want nil for a finding with no evidence", finding.Evidence)
+	}
+}
+
+// TestEmptyIdentifiersAreRejected guards against namespace "" becoming a
+// cluster-wide query. every tool must refuse an empty namespace or name before
+// it reaches the API, and say which field was empty.
+func TestEmptyIdentifiersAreRejected(t *testing.T) {
+	ctx := context.Background()
+	clientset := fake.NewClientset()
+
+	tests := []struct {
+		name  string
+		field string
+		call  func() error
+	}{
+		{"status empty namespace", "namespace", func() error {
+			_, err := GetWorkloadStatus(ctx, clientset, WorkloadStatusInput{Name: "web"})
+			return err
+		}},
+		{"status empty name", "name", func() error {
+			_, err := GetWorkloadStatus(ctx, clientset, WorkloadStatusInput{Namespace: "default"})
+			return err
+		}},
+		{"crashloop empty namespace", "namespace", func() error {
+			_, err := ExplainCrashloop(ctx, clientset, CrashloopInput{Pod: "p"})
+			return err
+		}},
+		{"crashloop empty pod", "pod", func() error {
+			_, err := ExplainCrashloop(ctx, clientset, CrashloopInput{Namespace: "default"})
+			return err
+		}},
+		{"events empty namespace with selector", "namespace", func() error {
+			_, err := GetPodEvents(ctx, clientset, PodEventsInput{LabelSelector: "app=web"})
+			return err
+		}},
+		{"events empty namespace with pod", "namespace", func() error {
+			_, err := GetPodEvents(ctx, clientset, PodEventsInput{Pod: "p"})
+			return err
+		}},
+		{"diff empty namespace", "namespace", func() error {
+			_, err := DiffDeploymentRevisions(ctx, clientset, RevisionDiffInput{Name: "web"})
+			return err
+		}},
+		{"diff empty name", "name", func() error {
+			_, err := DiffDeploymentRevisions(ctx, clientset, RevisionDiffInput{Namespace: "default"})
+			return err
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := test.call()
+			if err == nil {
+				t.Fatal("error = nil, want a validation error")
+			}
+			if !strings.Contains(err.Error(), test.field) {
+				t.Errorf("error %q does not name the empty field %q", err, test.field)
+			}
+		})
+	}
+}
+
+// TestEmptyNamespaceNeverReachesTheAPI checks the guard sits before any call:
+// with namespace "" the fake clientset must record no list or get at all.
+func TestEmptyNamespaceNeverReachesTheAPI(t *testing.T) {
+	clientset := fake.NewClientset()
+	_, _ = GetPodEvents(context.Background(), clientset, PodEventsInput{LabelSelector: "app=web"})
+	if actions := clientset.Actions(); len(actions) != 0 {
+		t.Errorf("API was called %d time(s) with an empty namespace: %v", len(actions), actions)
 	}
 }

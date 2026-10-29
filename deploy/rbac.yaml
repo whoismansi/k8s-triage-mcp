@@ -25,31 +25,24 @@ rules:
   # replicasets specifically are how deployment revision history is reconstructed.
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list"]
 
   # pods and their events: the primary evidence for crashloops and scheduling
   # failures. pods/log is required to read the previous container's output,
   # which is where the actual cause of a CrashLoopBackOff usually appears.
   - apiGroups: [""]
     resources: ["pods", "pods/log", "events"]
-    verbs: ["get", "list", "watch"]
+    verbs: ["get", "list"]
 
   # events moved to events.k8s.io; both groups are read so the server works
   # across cluster versions.
   - apiGroups: ["events.k8s.io"]
     resources: ["events"]
-    verbs: ["get", "list", "watch"]
-
-  # nodes: needed to explain why a Pending pod cannot be scheduled
-  # (insufficient allocatable resources, taints).
-  - apiGroups: [""]
-    resources: ["nodes"]
     verbs: ["get", "list"]
 
-  # persistentvolumeclaims: needed to explain a pod stuck on an unbound volume.
-  - apiGroups: [""]
-    resources: ["persistentvolumeclaims"]
-    verbs: ["get", "list"]
+  # the role grants exactly what the code calls today: get and list, no watch,
+  # and no nodes or persistentvolumeclaims. widen it only alongside the code
+  # that needs the extra access.
 
   # NOTE: configmaps and secrets are deliberately NOT granted. Diffing env vars
   # reports that a valueFrom reference changed, and names the key, but never

@@ -4,6 +4,8 @@
 // is testable against a fake clientset and reusable outside an MCP context.
 package triage
 
+import "fmt"
+
 // Severity ranks a finding. The agent uses this to decide what to lead with
 // when several findings come back from a single tool call.
 type Severity string
@@ -21,26 +23,23 @@ const (
 // do downstream tools, so they are documented in the README and must not be
 // renamed casually. Add new codes rather than repurposing existing ones.
 const (
-	CodeImagePullFailed      = "image_pull_failed"
-	CodeCrashLoopBackOff     = "crashloop_backoff"
-	CodeCommandNotFound      = "command_not_found"
-	CodeOOMKilled            = "oom_killed"
-	CodeSegfault             = "segfault"
-	CodeNonZeroExit          = "non_zero_exit"
-	CodeProbeTooAggressive   = "probe_too_aggressive"
-	CodeProbeFailing         = "probe_failing"
-	CodeUnschedulable        = "unschedulable"
-	CodeInsufficientResource = "insufficient_resources"
-	CodePVCUnbound           = "pvc_unbound"
-	CodeProgressDeadline     = "progress_deadline_exceeded"
-	CodeReplicasUnavailable  = "replicas_unavailable"
-	CodeRolloutStuck         = "rollout_stuck"
-	CodeImageChanged         = "image_changed"
-	CodeEnvChanged           = "env_changed"
-	CodeResourcesChanged     = "resources_changed"
-	CodeProbeChanged         = "probe_changed"
-	CodeCommandChanged       = "command_changed"
-	CodeOtherSpecChanged     = "other_spec_changed"
+	CodeImagePullFailed     = "image_pull_failed"
+	CodeCrashLoopBackOff    = "crashloop_backoff"
+	CodeCommandNotFound     = "command_not_found"
+	CodeOOMKilled           = "oom_killed"
+	CodeSegfault            = "segfault"
+	CodeNonZeroExit         = "non_zero_exit"
+	CodeProbeFailing        = "probe_failing"
+	CodeUnschedulable       = "unschedulable"
+	CodeProgressDeadline    = "progress_deadline_exceeded"
+	CodeReplicasUnavailable = "replicas_unavailable"
+	CodeRolloutStuck        = "rollout_stuck"
+	CodeImageChanged        = "image_changed"
+	CodeEnvChanged          = "env_changed"
+	CodeResourcesChanged    = "resources_changed"
+	CodeProbeChanged        = "probe_changed"
+	CodeCommandChanged      = "command_changed"
+	CodeOtherSpecChanged    = "other_spec_changed"
 
 	CodeKilledBySignal       = "killed_by_signal"
 	CodeExitedCleanly        = "exited_cleanly"
@@ -97,4 +96,19 @@ type ObjectRef struct {
 	Kind      string `json:"kind" jsonschema:"object kind, e.g. Deployment or Pod"`
 	Namespace string `json:"namespace" jsonschema:"object namespace"`
 	Name      string `json:"name" jsonschema:"object name"`
+}
+
+// requireName reports an error naming the field when a required identifier is
+// empty.
+//
+// namespace needs this in particular. the schema marks it required, but an
+// empty string satisfies "required", and client-go treats namespace "" as all
+// namespaces. without this check, a call meant for one namespace silently
+// searches the whole cluster and returns events and pods the caller never
+// asked about.
+func requireName(field, value string) error {
+	if value == "" {
+		return fmt.Errorf("%s is required and must not be empty", field)
+	}
+	return nil
 }

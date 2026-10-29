@@ -72,6 +72,12 @@ type GenerationStatus struct {
 // it might read as "healthy". A workload that exists and is fine returns an
 // empty Findings slice.
 func GetWorkloadStatus(ctx context.Context, clientset kubernetes.Interface, in WorkloadStatusInput) (WorkloadStatusOutput, error) {
+	if err := requireName("namespace", in.Namespace); err != nil {
+		return WorkloadStatusOutput{}, err
+	}
+	if err := requireName("name", in.Name); err != nil {
+		return WorkloadStatusOutput{}, err
+	}
 	kinds := []string{in.Kind}
 	if in.Kind == "" {
 		kinds = []string{"Deployment", "StatefulSet", "DaemonSet"}
@@ -139,7 +145,7 @@ func fromDeployment(deployment *appsv1.Deployment) WorkloadStatusOutput {
 			Type:               string(condition.Type),
 			Status:             string(condition.Status),
 			Reason:             condition.Reason,
-			Message:            condition.Message,
+			Message:            redactText(condition.Message),
 			LastTransitionTime: formatTime(condition.LastTransitionTime),
 		})
 	}
@@ -173,7 +179,7 @@ func fromStatefulSet(statefulSet *appsv1.StatefulSet) WorkloadStatusOutput {
 			Type:               string(condition.Type),
 			Status:             string(condition.Status),
 			Reason:             condition.Reason,
-			Message:            condition.Message,
+			Message:            redactText(condition.Message),
 			LastTransitionTime: formatTime(condition.LastTransitionTime),
 		})
 	}
@@ -206,7 +212,7 @@ func fromDaemonSet(daemonSet *appsv1.DaemonSet) WorkloadStatusOutput {
 			Type:               string(condition.Type),
 			Status:             string(condition.Status),
 			Reason:             condition.Reason,
-			Message:            condition.Message,
+			Message:            redactText(condition.Message),
 			LastTransitionTime: formatTime(condition.LastTransitionTime),
 		})
 	}

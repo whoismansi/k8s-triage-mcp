@@ -82,10 +82,16 @@ type PodEventsOutput struct {
 	// PodsTruncated is set when the selector matched more pods than searched.
 	PodsTruncated bool      `json:"podsTruncated,omitempty" jsonschema:"true when the selector matched more pods than were searched"`
 	Findings      []Finding `json:"findings" jsonschema:"structured observations drawn from warning events"`
+	// Warnings names sources that could not be read, so a partial answer is
+	// never mistaken for a complete one.
+	Warnings []string `json:"warnings,omitempty" jsonschema:"sources that could not be read; results may be incomplete"`
 }
 
 // GetPodEvents returns recent, noise-filtered events for a pod or selector.
 func GetPodEvents(ctx context.Context, clientset kubernetes.Interface, in PodEventsInput) (PodEventsOutput, error) {
+	if err := requireName("namespace", in.Namespace); err != nil {
+		return PodEventsOutput{}, err
+	}
 	if (in.Pod == "") == (in.LabelSelector == "") {
 		return PodEventsOutput{}, fmt.Errorf("set exactly one of pod or labelSelector")
 	}
@@ -108,20 +114,27 @@ func GetPodEvents(ctx context.Context, clientset kubernetes.Interface, in PodEve
 	// and which one a cluster populates depends on its version and components.
 	// the merge below dedupes events that appear in both.
 	collected := map[string]*PodEvent{}
+	var eventsV1Err error
 	for _, podName := range pods {
 		if err := collectCoreEvents(ctx, clientset, in.Namespace, podName, collected); err != nil {
 			return PodEventsOutput{}, err
 		}
-		// events.k8s.io is best effort: a cluster may not serve it, and the
-		// core API alone is still a complete answer on those clusters.
-		_ = collectEventsV1(ctx, clientset, in.Namespace, podName, collected)
+		if err := collectEventsV1(ctx, clientset, in.Namespace, podName, collected); err != nil && eventsV1Err == nil {
+			eventsV1Err = err
+		}
+	}
+	var warnings []string
+	if eventsV1Err != nil {
+		warnings = append(warnings, fmt.Sprintf("could not read events.k8s.io, showing core API events only: %v", eventsV1Err))
 	}
 
 	cutoff := time.Now().Add(-window)
 	var inWindow, kept []PodEvent
 	for _, event := range collected {
+		// an event with no usable timestamp cannot be placed in the window,
+		// so it is left out rather than presented as recent.
 		lastSeen, parseErr := time.Parse(time.RFC3339, event.LastSeen)
-		if parseErr == nil && lastSeen.Before(cutoff) {
+		if parseErr != nil || lastSeen.Before(cutoff) {
 			continue
 		}
 		inWindow = append(inWindow, *event)
@@ -155,6 +168,7 @@ func GetPodEvents(ctx context.Context, clientset kubernetes.Interface, in PodEve
 		TotalMatched:  len(inWindow),
 		Filtered:      filtered,
 		PodsTruncated: podsTruncated,
+		Warnings:      warnings,
 	}
 	if len(kept) > limit {
 		out.Truncated = true
@@ -221,7 +235,7 @@ func collectCoreEvents(ctx context.Context, clientset kubernetes.Interface, name
 		merge(collected, PodEvent{
 			Type:      event.Type,
 			Reason:    event.Reason,
-			Message:   event.Message,
+			Message:   redactText(event.Message),
 			Object:    ObjectRef{Kind: event.InvolvedObject.Kind, Namespace: namespace, Name: event.InvolvedObject.Name},
 			Count:     max(count, 1),
 			FirstSeen: formatGoTime(earliestTime(event.FirstTimestamp.Time, event.EventTime.Time)),
@@ -261,7 +275,7 @@ func fromEventsV1(namespace string, event eventsv1.Event) PodEvent {
 	return PodEvent{
 		Type:      event.Type,
 		Reason:    event.Reason,
-		Message:   event.Note,
+		Message:   redactText(event.Note),
 		Object:    ObjectRef{Kind: event.Regarding.Kind, Namespace: namespace, Name: event.Regarding.Name},
 		Count:     max(count, 1),
 		FirstSeen: formatGoTime(earliestTime(event.DeprecatedFirstTimestamp.Time, event.EventTime.Time)),
